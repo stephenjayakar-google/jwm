@@ -22,14 +22,25 @@ final class Hotkeys {
             userInfo: nil
         ) else { return false }
         self.tap = tap
-        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        // The tap gets its own thread: if it ran on the main thread, slow AX calls there could delay
+        // it past the system's timeout, which disables the tap and lets keys through to apps.
+        // All state in handle() is only touched on this thread; real work is sent to main.
+        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
+        let thread = Thread {
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+            CFRunLoopRun()
+        }
+        thread.name = "jwm.hotkeys"
+        thread.qualityOfService = .userInteractive
+        thread.start()
         return true
     }
 
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(event)
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            log("event tap was disabled (\(type == .tapDisabledByTimeout ? "timeout" : "user input")); re-enabling")
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return pass
         }
