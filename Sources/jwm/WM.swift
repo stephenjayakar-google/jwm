@@ -16,6 +16,9 @@ final class WM {
     private var started = false
     private var refreshScheduled = false
     private var saveScheduled = false
+    /// Panes that windows were showing in when they went away (minimized, native full screen), so
+    /// they return there instead of to the selected pane.
+    private var vacated: [CGWindowID: Pane] = [:]
     /// Guards against apps whose size never settles making layout() recurse forever.
     private var layoutDepth = 0
     /// Windows that reported a move/resize, checked once things settle.
@@ -171,12 +174,23 @@ final class WM {
         for id in removed { forget(id) }
 
         guard started, !(added.isEmpty && removed.isEmpty) else { return }
-        // New windows open in the selected pane, like Emacs displaying a new buffer.
-        for id in added { display(id) }
+        for id in added {
+            // A window coming back (un-minimized, left full screen) returns to its pane.
+            if let pane = vacated.removeValue(forKey: id), tab.panes.contains(where: { $0 === pane }) {
+                if tab.zoomed != nil, tab.zoomed !== pane { tab.zoomed = nil }
+                tab.focused = pane
+            }
+            // New windows open in the selected pane, like Emacs displaying a new buffer.
+            display(id)
+        }
         layout()
     }
 
     private func forget(_ id: CGWindowID) {
+        if started, let pane = tab.panes.first(where: { $0.current == id }) {
+            if vacated.count > 100 { vacated.removeAll() }
+            vacated[id] = pane
+        }
         windows[id] = nil
         mru.removeAll { $0 == id }
         for tab in tabs {
@@ -212,10 +226,14 @@ final class WM {
     private func userFocused(_ element: AXUIElement) {
         guard started, Date() > ignoreFocusUntil, let id = element.windowID else { return }
         guard windows[id] != nil else { scheduleRefresh(); return }
-        // The selected pane's window just closed and the app is focusing another of its windows:
-        // stay in this pane and let refresh() fall back through its history, like Emacs kill-buffer.
-        if let current = tab.focused.current, current != id,
-           windows[current]?.element.string(kAXRoleAttribute) == nil {
+        // A visible window just closed or minimized and macOS is focusing some other window in
+        // response. That's not the user's choice: ignore it and let refresh() fall back through
+        // the pane's history (like Emacs kill-buffer), then refocus the selected pane.
+        let vanishing = tab.visiblePanes.contains { pane in
+            guard let current = pane.current, current != id, let window = windows[current] else { return false }
+            return window.element.string(kAXRoleAttribute) == nil || window.element.bool(kAXMinimizedAttribute) == true
+        }
+        if vanishing {
             scheduleRefresh()
             return
         }

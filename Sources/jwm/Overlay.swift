@@ -34,18 +34,30 @@ private final class BorderView: NSView {
     var empty = false
 
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 13, yRadius: 13)
-        path.lineWidth = 3
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 13, yRadius: 13)
+        if empty {
+            NSColor.controlAccentColor.withAlphaComponent(0.08).setFill()
+            outline.fill()
+        }
+        outline.lineWidth = 3
         NSColor.controlAccentColor.setStroke()
-        path.stroke()
+        outline.stroke()
         guard empty else { return }
-        let text = "empty pane · ⌘D b for buffers" as NSString
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 15, weight: .medium),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-        let size = text.size(withAttributes: attrs)
-        text.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attrs)
+
+        // Hint card in the middle of an empty pane, legible on any wallpaper.
+        let title = NSAttributedString(string: "Empty pane", attributes: [
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.white,
+        ])
+        let hint = NSAttributedString(string: "⌘D b  buffers     ⌘D ?  help", attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.75),
+        ])
+        let width = max(title.size().width, hint.size().width) + 40
+        let card = NSRect(x: bounds.midX - width / 2, y: bounds.midY - 32, width: width, height: 64)
+        NSColor.black.withAlphaComponent(0.55).setFill()
+        NSBezierPath(roundedRect: card, xRadius: 12, yRadius: 12).fill()
+        title.draw(at: NSPoint(x: card.midX - title.size().width / 2, y: card.midY + 3))
+        hint.draw(at: NSPoint(x: card.midX - hint.size().width / 2, y: card.midY - hint.size().height - 4))
     }
 }
 
