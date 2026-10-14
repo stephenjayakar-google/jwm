@@ -13,7 +13,13 @@ final class WM {
     var tab: Tab { tabs[tabIndex] }
     /// Most recently focused first.
     private(set) var mru: [CGWindowID] = []
+    /// Largest minimum window size seen per app; new windows of the app start with it.
+    private(set) var minimums: [String: CGSize] = [:]
     private var started = false
+    /// jwm manages the Space it started on and leaves other Spaces alone (AX only reports windows
+    /// on the current Space, so managing several would scramble the layout).
+    private var homeSpace: UInt64 = 0
+    var onHomeSpace: Bool { activeSpace() == homeSpace }
     private var refreshScheduled = false
     private var saveScheduled = false
     /// Panes that windows were showing in when they went away (minimized, native full screen), so
@@ -50,6 +56,11 @@ final class WM {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { _ in self.layout() }
+        nc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { _ in
+            self.spaceChanged()
+        }
+        homeSpace = activeSpace()
+        minimums = loadMinimums()
 
         refresh()
         // Seed recency from the on-screen stacking order (front to back).
@@ -76,7 +87,18 @@ final class WM {
         started = true
         layout()
 
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in self.refresh() }
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in self.refresh() }
+    }
+
+    private func spaceChanged() {
+        if onHomeSpace {
+            refresh()
+            layout()
+        } else {
+            border.hide()
+            Hud.shared.flash("jwm is paused on this desktop")
+        }
+        StatusBar.shared.update()
     }
 
     /// One pane showing the focused window.
@@ -140,6 +162,7 @@ final class WM {
 
     /// Reconciles our window table with what the apps report.
     func refresh() {
+        if started && !onHomeSpace { return }
         let running = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && $0.processIdentifier != getpid()
         }
@@ -164,6 +187,7 @@ final class WM {
                     let window = Window(id: id, element: element, pid: watcher.pid,
                                         app: watcher.element, appName: watcher.name)
                     if let frame = element.frame, isMostlyOnScreen(frame) { window.home = frame }
+                    window.minSize = minimums[watcher.name] ?? .zero
                     windows[id] = window
                     watcher.watch(element)
                     added.append(id)
@@ -224,7 +248,7 @@ final class WM {
 
     /// The user focused a window (click, Cmd-Tab, app activation).
     private func userFocused(_ element: AXUIElement) {
-        guard started, Date() > ignoreFocusUntil, let id = element.windowID else { return }
+        guard started, onHomeSpace, Date() > ignoreFocusUntil, let id = element.windowID else { return }
         guard windows[id] != nil else { scheduleRefresh(); return }
         // A visible window just closed or minimized and macOS is focusing some other window in
         // response. That's not the user's choice: ignore it and let refresh() fall back through
@@ -253,7 +277,7 @@ final class WM {
     // MARK: External moves and resizes
 
     private func frameChanged(_ element: AXUIElement) {
-        guard started, let id = element.windowID, let window = windows[id],
+        guard started, onHomeSpace, let id = element.windowID, let window = windows[id],
               Date() > window.ownChangeUntil else { return }
         movedWindows.insert(id)
         scheduleFrameCheck()
@@ -357,8 +381,8 @@ final class WM {
     }
 
     /// Emacs other-buffer: the most recent window not visible in this tab.
-    private func otherBuffer() -> CGWindowID? {
-        let ok = { (id: CGWindowID) in self.available(id, in: self.tab, for: nil) }
+    private func otherBuffer(where fits: @escaping (CGWindowID) -> Bool = { _ in true }) -> CGWindowID? {
+        let ok = { (id: CGWindowID) in self.available(id, in: self.tab, for: nil) && fits(id) }
         return mru.first(where: ok) ?? windows.keys.sorted().first(where: ok)
     }
 
@@ -397,7 +421,7 @@ final class WM {
 
     /// Moves every window to where the current tab says it belongs and focuses the selected pane.
     func layout() {
-        guard started else { return }
+        guard started, onHomeSpace else { return }
         var frames: [CGWindowID: CGRect] = [:]
         for (pane, rect) in paneRects() {
             if let id = pane.current { frames[id] = rect }
@@ -440,6 +464,9 @@ final class WM {
         if actual.height > frame.height + 1 { minimum.height = actual.height }
         guard minimum != window.minSize else { return false }
         window.minSize = minimum
+        let known = minimums[window.appName] ?? .zero
+        minimums[window.appName] = CGSize(width: max(known.width, minimum.width),
+                                          height: max(known.height, minimum.height))
         log("\(window.label) minimum size \(minimum)")
         return true
     }
@@ -488,6 +515,7 @@ final class WM {
 
     func command(_ key: Int, shift: Bool) {
         log("command key=\(key)")
+        guard onHomeSpace || key == kVK_ANSI_D else { return Hud.shared.flash("jwm is paused on this desktop") }
         guard let command = WM.commands.first(where: { $0.keys.contains(key) }) else {
             return Hud.shared.flash("⌘D … is undefined · ⌘D ? for help")
         }
@@ -500,8 +528,20 @@ final class WM {
 
     func split(vertical: Bool) {
         tab.zoomed = nil
+        // Like Emacs, refuse to split a pane whose window wouldn't fit in half of it.
+        var half = CGFloat.infinity
+        if let rect = paneRects().first(where: { $0.0 === tab.focused })?.1 {
+            half = ((vertical ? rect.width : rect.height) - gap) / 2
+        }
+        let length = { (id: CGWindowID) -> CGFloat in
+            guard let size = self.windows[id]?.minSize else { return 0 }
+            return vertical ? size.width : size.height
+        }
+        if let id = tab.focused.current, length(id) > half {
+            return Hud.shared.flash("Not enough room to split this pane")
+        }
         let fresh = Pane()
-        if let id = otherBuffer() { fresh.show(id) }
+        if let id = otherBuffer(where: { length($0) <= half }) { fresh.show(id) }
         tab.split(tab.focused, vertical: vertical, with: fresh)
         layout()
     }
@@ -521,6 +561,7 @@ final class WM {
     }
 
     func focusPane(_ dir: Int) {
+        guard onHomeSpace else { return }
         if tab.zoomed != nil {
             tab.zoomed = nil
             layout()

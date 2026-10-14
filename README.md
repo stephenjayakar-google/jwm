@@ -7,6 +7,12 @@ An Emacs-style tiling window manager for macOS.
 - **Tabs** are separate window configurations (split trees). The same buffer can appear in several tabs.
 - New windows open in the selected pane, replacing what was there (it stays in that pane's history).
 - Focusing a window that isn't displayed (Cmd-Tab, Dock click) shows it in the selected pane.
+- Un-minimizing a window (or leaving native full screen) puts it back in the pane it came from.
+- Apps' minimum window sizes are learned and respected: panes don't shrink below them, and a split that
+  wouldn't fit is refused (like Emacs' "window too small for splitting").
+- Tabs, splits and pane histories are saved to `~/Library/Application Support/jwm/state.json` and restored
+  when jwm restarts (menu bar → Reset Layout to start over).
+- jwm manages the desktop (Space) it was started on and pauses on others.
 - If something else changes a tiled window's frame (mouse drag, Raycast/Rectangle, the app itself):
   - one edge moved per axis, and the split tree can express it → the split follows, and so do the other panes;
   - anything else (moved, or e.g. "top half" with no top/bottom split) → the window snaps back.
@@ -46,8 +52,19 @@ make app       # build jwm.app
 
 jwm needs Accessibility permission. Run from a terminal, it uses the terminal's permission.
 
+## Menu bar
+
+The ▥ icon shows the tabs (`1 [2] 3`) and has Commands, Re-layout, Reset Layout and Quit. On a notched
+MacBook it may be hidden behind the notch; ⌘-drag it somewhere visible and it stays there. Tab changes
+are also announced at the bottom of the screen.
+
+## Debugging
+
+`JWM_DEBUG=1 make run` logs commands and placements. `pkill -USR1 jwm` prints the split tree and pane
+histories; `pkill -USR2 jwm` renders jwm's own windows to `/tmp/jwm-snapshot-*.png`.
+
 ## Limitations (for now)
 
-- Primary display only; turn off extra macOS Spaces (jwm tabs replace them).
+- Primary display only, and one Space (it pauses on other Spaces).
 - Floating windows (dialogs, non-resizable windows) aren't managed.
 - State isn't saved across restarts.

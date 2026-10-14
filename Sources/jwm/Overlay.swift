@@ -125,6 +125,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
 
     func update() {
         let wm = WM.shared
+        item.button?.appearsDisabled = !wm.onHomeSpace
         item.button?.title = wm.tabs.count < 2 ? "" : " " + wm.tabs.indices
             .map { $0 == wm.tabIndex ? "[\($0 + 1)]" : "\($0 + 1)" }
             .joined(separator: " ")

@@ -17,6 +17,8 @@ struct SavedState: Codable {
     var tabs: [Tab]
     var tabIndex: Int
     var mru: [CGWindowID]
+    /// Learned minimum window sizes per app name.
+    var minimums: [String: CGSize]?
 }
 
 extension WM {
@@ -31,7 +33,8 @@ extension WM {
                                zoomed: tab.zoomed != nil)
             },
             tabIndex: tabIndex,
-            mru: mru
+            mru: mru,
+            minimums: minimums
         )
         do {
             try FileManager.default.createDirectory(at: WM.stateURL.deletingLastPathComponent(),
@@ -48,11 +51,17 @@ extension WM {
         return .split(vertical: split.vertical, ratio: split.ratio, a: self.node(split.a), b: self.node(split.b))
     }
 
+    private func readState() -> SavedState? {
+        guard let data = try? Data(contentsOf: WM.stateURL) else { return nil }
+        return try? JSONDecoder().decode(SavedState.self, from: data)
+    }
+
+    /// Minimum window sizes learned in earlier runs.
+    func loadMinimums() -> [String: CGSize] { readState()?.minimums ?? [:] }
+
     /// Tabs from the last run, with closed windows dropped. nil if nothing from it is still open.
     func loadState() -> (tabs: [Tab], tabIndex: Int, mru: [CGWindowID])? {
-        guard let data = try? Data(contentsOf: WM.stateURL),
-              let state = try? JSONDecoder().decode(SavedState.self, from: data),
-              !state.tabs.isEmpty else { return nil }
+        guard let state = readState(), !state.tabs.isEmpty else { return nil }
 
         func build(_ saved: SavedState.Node) -> Node {
             switch saved {

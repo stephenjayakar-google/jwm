@@ -5,6 +5,15 @@ import ApplicationServices
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ element: AXUIElement, _ id: inout CGWindowID) -> AXError
 
+@_silgen_name("CGSMainConnectionID")
+private func CGSMainConnectionID() -> Int32
+
+@_silgen_name("CGSGetActiveSpace")
+private func CGSGetActiveSpace(_ connection: Int32) -> UInt64
+
+/// ID of the macOS Space (desktop) currently shown. Private API, as used by yabai/AeroSpace.
+func activeSpace() -> UInt64 { CGSGetActiveSpace(CGSMainConnectionID()) }
+
 extension AXUIElement {
     func value(_ attribute: String) -> CFTypeRef? {
         var value: CFTypeRef?
