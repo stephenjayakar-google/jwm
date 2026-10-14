@@ -17,6 +17,8 @@ final class Window {
     var corrections = 0
     /// Move/resize events before this time are echoes of our own setFrame/park.
     var ownChangeUntil = Date.distantPast
+    /// Smallest size the app accepted, learned when it refuses a smaller one.
+    var minSize = CGSize.zero
     /// Frame before jwm touched it, restored on quit.
     var home: CGRect?
 
@@ -30,6 +32,17 @@ final class Window {
 
     var title: String { element.string(kAXTitleAttribute) ?? "" }
     var label: String { title.isEmpty || title == appName ? appName : "\(appName) — \(title)" }
+
+    /// Title without the " - AppName …" suffix most apps append (Chrome, Obsidian, Discord, …).
+    var shortTitle: String {
+        var title = self.title
+        for separator in [" - ", " — ", " – "] {
+            if let range = title.range(of: separator + appName) { title = String(title[..<range.lowerBound]) }
+        }
+        return title.isEmpty ? appName : title
+    }
+
+    var icon: NSImage? { NSRunningApplication(processIdentifier: pid)?.icon }
 
     static func isManageable(_ element: AXUIElement) -> Bool {
         element.string(kAXSubroleAttribute) == kAXStandardWindowSubrole

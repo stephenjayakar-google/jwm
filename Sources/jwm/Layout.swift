@@ -12,6 +12,13 @@ final class Pane: Node {
 
     var current: CGWindowID? { history.indices.contains(index) ? history[index] : nil }
 
+    override init() {}
+
+    init(history: [CGWindowID], index: Int) {
+        self.history = history
+        self.index = min(max(index, -1), history.count - 1)
+    }
+
     override func collect(_ out: inout [Pane]) { out.append(self) }
 
     /// Shows `id` right after the current entry; forward history is kept, not truncated.
@@ -114,17 +121,42 @@ final class Tab {
         return leaves.first
     }
 
-    /// Calls `visit` with every node and its rect within `bounds`, in tree order.
-    private func walk(in bounds: CGRect, _ visit: (Node, CGRect) -> Void) {
+    /// Calls `visit` with every node and its rect within `bounds`, in tree order. Splits honor
+    /// `minimum` (each pane's smallest usable size) where the space allows, otherwise they share
+    /// the space in proportion to the minimums.
+    private func walk(in bounds: CGRect, minimum: (Pane) -> CGSize, _ visit: (Node, CGRect) -> Void) {
+        func minSize(_ node: Node) -> CGSize {
+            switch node {
+            case let pane as Pane:
+                return minimum(pane)
+            case let split as Split:
+                let a = minSize(split.a), b = minSize(split.b)
+                return split.vertical
+                    ? CGSize(width: a.width + b.width, height: max(a.height, b.height))
+                    : CGSize(width: max(a.width, b.width), height: a.height + b.height)
+            default:
+                return .zero
+            }
+        }
+        func divide(_ split: Split, _ length: CGFloat, _ minA: CGFloat, _ minB: CGFloat) -> CGFloat {
+            let wanted = (length * split.ratio).rounded()
+            guard minA + minB > 0 else { return wanted }
+            if minA + minB > length { return (length * minA / (minA + minB)).rounded() }
+            let clamped = min(max(wanted, minA), length - minB)
+            // Store the ratio actually used, so growing/shrinking past a minimum has no dead zone.
+            if clamped != wanted { split.ratio = clamped / length }
+            return clamped
+        }
         func walk(_ node: Node, _ r: CGRect) {
             visit(node, r)
             guard let split = node as? Split else { return }
+            let minA = minSize(split.a), minB = minSize(split.b)
             if split.vertical {
-                let w = (r.width * split.ratio).rounded()
+                let w = divide(split, r.width, minA.width, minB.width)
                 walk(split.a, CGRect(x: r.minX, y: r.minY, width: w, height: r.height))
                 walk(split.b, CGRect(x: r.minX + w, y: r.minY, width: r.width - w, height: r.height))
             } else {
-                let h = (r.height * split.ratio).rounded()
+                let h = divide(split, r.height, minA.height, minB.height)
                 walk(split.a, CGRect(x: r.minX, y: r.minY, width: r.width, height: h))
                 walk(split.b, CGRect(x: r.minX, y: r.minY + h, width: r.width, height: r.height - h))
             }
@@ -133,10 +165,10 @@ final class Tab {
     }
 
     /// Pane rects within `bounds`, in tree order.
-    func rects(in bounds: CGRect) -> [(Pane, CGRect)] {
+    func rects(in bounds: CGRect, minimum: (Pane) -> CGSize = { _ in .zero }) -> [(Pane, CGRect)] {
         if let zoomed { return [(zoomed, bounds)] }
         var out: [(Pane, CGRect)] = []
-        walk(in: bounds) { node, r in
+        walk(in: bounds, minimum: minimum) { node, r in
             if let pane = node as? Pane { out.append((pane, r)) }
         }
         return out
@@ -144,10 +176,11 @@ final class Tab {
 
     /// Something dragged edges of `pane`'s window from `expected` to `actual`: move the split boundaries
     /// to follow. `bounds` is what `rects(in:)` was given, `inset` how far windows sit inside their pane.
-    func adjust(_ pane: Pane, from expected: CGRect, to actual: CGRect, bounds: CGRect, inset: CGFloat) -> Bool {
+    func adjust(_ pane: Pane, from expected: CGRect, to actual: CGRect, bounds: CGRect, inset: CGFloat,
+                minimum: (Pane) -> CGSize = { _ in .zero }) -> Bool {
         guard zoomed == nil else { return false }
         var splitRects: [ObjectIdentifier: CGRect] = [:]
-        walk(in: bounds) { node, r in
+        walk(in: bounds, minimum: minimum) { node, r in
             if node is Split { splitRects[ObjectIdentifier(node)] = r }
         }
         // Nearest ancestor split along that axis with the pane on the given side, and its new ratio.

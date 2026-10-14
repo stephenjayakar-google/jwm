@@ -23,30 +23,60 @@ final class Help: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.onKey = { [weak self] in self?.finish() }
 
-        let rows = WM.commands.map { ("⌘D \($0.label)", $0.help) } + WM.globalBindings.map { ($0.label, $0.help) }
-        let grid = NSGridView(views: rows.map { keys, help in
-            let key = NSTextField(labelWithString: keys)
-            key.font = .monospacedSystemFont(ofSize: 13, weight: .semibold)
-            let text = NSTextField(labelWithString: help)
-            text.font = .systemFont(ofSize: 13)
-            return [key, text]
-        })
-        grid.rowSpacing = 6
-        grid.columnSpacing = 20
-        grid.column(at: 0).xPlacement = .trailing
+        // One grid per column so keys line up across sections; headers are merged rows.
+        func column(_ sections: [Command.Section]) -> NSGridView {
+            let grid = NSGridView(numberOfColumns: 2, rows: 0)
+            grid.rowSpacing = 5
+            grid.columnSpacing = 14
+            for section in sections {
+                let header = NSTextField(labelWithString: section.rawValue.uppercased())
+                header.font = .systemFont(ofSize: 10.5, weight: .bold)
+                header.textColor = .secondaryLabelColor
+                let headerRow = grid.addRow(with: [header, NSGridCell.emptyContentView])
+                grid.mergeCells(inHorizontalRange: NSRange(location: 0, length: 2),
+                                verticalRange: NSRange(location: grid.numberOfRows - 1, length: 1))
+                headerRow.cell(at: 0).xPlacement = .leading
+                if grid.numberOfRows > 1 { headerRow.topPadding = 14 }
+                headerRow.bottomPadding = 2
 
-        let title = NSTextField(labelWithString: "jwm commands")
-        title.font = .systemFont(ofSize: 15, weight: .bold)
+                let rows = WM.commands.filter { $0.section == section }.map { ("⌘D \($0.label)", $0.help) }
+                    + WM.globalBindings.filter { $0.section == section }.map { ($0.label, $0.help) }
+                for (keys, help) in rows {
+                    let key = NSTextField(labelWithString: keys)
+                    key.font = .monospacedSystemFont(ofSize: 12.5, weight: .semibold)
+                    let text = NSTextField(labelWithString: help)
+                    text.font = .systemFont(ofSize: 13)
+                    grid.addRow(with: [key, text]).cell(at: 0).xPlacement = .trailing
+                }
+            }
+            grid.setContentHuggingPriority(.required, for: .vertical)
+            return grid
+        }
+        let columns = NSStackView(views: [column([.panes]), column([.buffers, .tabs, .other])])
+        columns.alignment = .top
+        columns.spacing = 40
+
+        let title = NSTextField(labelWithString: "jwm")
+        title.font = .systemFont(ofSize: 17, weight: .bold)
         let hint = NSTextField(labelWithString: "Press any key to close")
         hint.font = .systemFont(ofSize: 11)
-        hint.textColor = .secondaryLabelColor
+        hint.textColor = .tertiaryLabelColor
 
-        let stack = NSStackView(views: [title, grid, hint])
+        let stack = NSStackView(views: [title, columns, hint])
         stack.orientation = .vertical
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 30, left: 28, bottom: 18, right: 28)
-        panel.contentView = stack
-        panel.setContentSize(stack.fittingSize)
+        stack.alignment = .centerX
+        stack.spacing = 16
+        let container = NSView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 30),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -18),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32),
+        ])
+        panel.contentView = container
+        panel.setContentSize(container.fittingSize)
     }
 
     func show(completion: @escaping () -> Void) {

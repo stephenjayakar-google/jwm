@@ -36,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usr1.setEventHandler { print(WM.shared.dump()); fflush(stdout) }
         usr1.resume()
         signalSources.append(usr1)
+        let usr2 = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        signal(SIGUSR2, SIG_IGN)
+        usr2.setEventHandler { snapshotOwnWindows() }
+        usr2.resume()
+        signalSources.append(usr2)
 
         guard Hotkeys.shared.start() else {
             print("jwm: couldn't create the keyboard event tap")
@@ -45,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        WM.shared.saveState()
         WM.shared.restoreAll()
     }
 }

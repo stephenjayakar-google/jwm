@@ -94,27 +94,50 @@ final class Hud {
     func hide() { panel.orderOut(nil) }
 }
 
-/// Menu bar item showing the tabs, e.g. "1 [2] 3".
-final class StatusBar: NSObject {
+/// Menu bar item: an icon, plus the tabs ("1 [2] 3") once there's more than one.
+final class StatusBar: NSObject, NSMenuDelegate {
     static let shared = StatusBar()
 
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let menu = NSMenu()
 
     override init() {
         super.init()
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Re-layout", action: #selector(relayout), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit jwm", action: #selector(quit), keyEquivalent: "").target = self
+        // Remembers where the user ⌘-drags it (e.g. out from behind the notch).
+        item.autosaveName = "jwm"
+        item.button?.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "jwm")
+        item.button?.imagePosition = .imageLeading
+        menu.delegate = self
         item.menu = menu
     }
 
     func update() {
         let wm = WM.shared
-        item.button?.title = wm.tabs.indices
+        item.button?.title = wm.tabs.count < 2 ? "" : " " + wm.tabs.indices
             .map { $0 == wm.tabIndex ? "[\($0 + 1)]" : "\($0 + 1)" }
             .joined(separator: " ")
     }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let wm = WM.shared
+        menu.removeAllItems()
+        for i in wm.tabs.indices {
+            let item = menu.addItem(withTitle: "Tab \(i + 1)", action: #selector(selectTab(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = i
+            item.state = i == wm.tabIndex ? .on : .off
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Commands…  (⌘D ?)", action: #selector(help), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Re-layout  (⌘D r)", action: #selector(relayout), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Reset Layout", action: #selector(reset), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit jwm", action: #selector(quit), keyEquivalent: "").target = self
+    }
+
+    @objc private func selectTab(_ sender: NSMenuItem) { WM.shared.selectTab(sender.tag) }
+    @objc private func help() { WM.shared.showHelp() }
+    @objc private func reset() { WM.shared.resetLayout() }
 
     @objc private func relayout() {
         WM.shared.refresh()
@@ -122,4 +145,18 @@ final class StatusBar: NSObject {
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+}
+
+/// Debug aid (SIGUSR2): renders jwm's visible windows to /tmp/jwm-snapshot-N.png, since capturing
+/// other apps' windows needs Screen Recording permission but our own don't.
+func snapshotOwnWindows() {
+    for (i, window) in NSApp.windows.filter(\.isVisible).enumerated() {
+        guard let view = window.contentView?.superview ?? window.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let url = URL(fileURLWithPath: "/tmp/jwm-snapshot-\(i).png")
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        print("snapshot \(url.path) \(window.frame)")
+    }
+    fflush(stdout)
 }

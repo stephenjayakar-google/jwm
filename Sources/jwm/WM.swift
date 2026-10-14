@@ -12,9 +12,12 @@ final class WM {
     private(set) var tabIndex = 0
     var tab: Tab { tabs[tabIndex] }
     /// Most recently focused first.
-    private var mru: [CGWindowID] = []
+    private(set) var mru: [CGWindowID] = []
     private var started = false
     private var refreshScheduled = false
+    private var saveScheduled = false
+    /// Guards against apps whose size never settles making layout() recurse forever.
+    private var layoutDepth = 0
     /// Windows that reported a move/resize, checked once things settle.
     private var movedWindows = Set<CGWindowID>()
     private var frameCheckScheduled = false
@@ -50,16 +53,53 @@ final class WM {
         let stack = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
         mru = stack.compactMap { $0[kCGWindowNumber as String] as? CGWindowID }.filter { windows[$0] != nil }
-        let first = Tab()
-        if let id = frontmostWindow()?.id ?? mru.first {
-            first.focused.show(id)
-            touch(id)
+        if let saved = loadState() {
+            tabs = saved.tabs
+            tabIndex = saved.tabIndex
+            mru = saved.mru.filter { windows[$0] != nil } + mru.filter { !saved.mru.contains($0) }
+            // Drop windows closed since the last run; panes fall back through their histories.
+            for tab in tabs {
+                for pane in tab.panes {
+                    for id in pane.history where windows[id] == nil {
+                        if pane.remove(id) { fallback(pane, in: tab) }
+                    }
+                    fallback(pane, in: tab)
+                }
+            }
+            log("restored \(tabs.count) tab(s) from the last run")
+        } else {
+            tabs = [freshTab()]
         }
-        tabs = [first]
         started = true
         layout()
 
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in self.refresh() }
+    }
+
+    /// One pane showing the focused window.
+    private func freshTab() -> Tab {
+        let tab = Tab()
+        if let id = frontmostWindow()?.id ?? mru.first {
+            tab.focused.show(id)
+            touch(id)
+        }
+        return tab
+    }
+
+    /// Forgets all tabs and splits: one tab, one pane, showing the focused window.
+    func resetLayout() {
+        tabs = [freshTab()]
+        tabIndex = 0
+        layout()
+    }
+
+    private func scheduleSave() {
+        guard !saveScheduled else { return }
+        saveScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.saveScheduled = false
+            self.saveState()
+        }
     }
 
     /// Puts parked windows back where they were before jwm started (or centered).
@@ -232,8 +272,8 @@ final class WM {
             // A changed edge (mouse drag, Raycast "left 2/3", …) resizes the pane.
             if let pane = tab.visiblePanes.first(where: { $0.current == window.id }) {
                 let half = gap / 2
-                if tab.adjust(pane, from: expected, to: actual,
-                              bounds: screenBounds().insetBy(dx: half, dy: half), inset: half) {
+                if tab.adjust(pane, from: expected, to: actual, bounds: layoutBounds, inset: half,
+                              minimum: paneMinimum) {
                     log("\(window.label) resized externally → adjusted splits")
                     return true
                 }
@@ -322,9 +362,19 @@ final class WM {
         flipped(NSScreen.screens.first?.visibleFrame ?? .zero)
     }
 
+    /// Area panes are laid out in: the screen minus half a gap (each window insets the other half).
+    private var layoutBounds: CGRect { screenBounds().insetBy(dx: gap / 2, dy: gap / 2) }
+
+    /// Smallest pane that fits its window's learned minimum size.
+    private func paneMinimum(_ pane: Pane) -> CGSize {
+        guard let id = pane.current, let size = windows[id]?.minSize, size != .zero else { return .zero }
+        return CGSize(width: size.width + gap, height: size.height + gap)
+    }
+
+    /// Window frames for the current tab's panes.
     private func paneRects() -> [(Pane, CGRect)] {
         let half = gap / 2
-        return tab.rects(in: screenBounds().insetBy(dx: half, dy: half)).map { ($0, $1.insetBy(dx: half, dy: half)) }
+        return tab.rects(in: layoutBounds, minimum: paneMinimum).map { ($0, $1.insetBy(dx: half, dy: half)) }
     }
 
     /// Moves every window to where the current tab says it belongs and focuses the selected pane.
@@ -335,15 +385,45 @@ final class WM {
             if let id = pane.current { frames[id] = rect }
         }
         let screen = flipped(NSScreen.screens.first?.frame ?? .zero)
+        var learned = false
         for window in windows.values {
-            if let frame = frames[window.id] {
-                window.setFrame(frame)
-                log("place \(window.label) \(frame) → \(window.element.frame.map { "\($0)" } ?? "?")")
+            if let rect = frames[window.id] {
+                learned = place(window, in: rect) || learned
             } else if !window.parked {
                 window.park(in: screen)
             }
         }
+        // A window refused its size: lay out again with its minimum taken into account.
+        if learned && layoutDepth < 3 {
+            layoutDepth += 1
+            defer { layoutDepth -= 1 }
+            return layout()
+        }
         focusSelected()
+        scheduleSave()
+    }
+
+    /// Puts `window` in `rect`, never smaller than its minimum size and never hanging off screen
+    /// (if the panes can't all fit, windows overlap their neighbours instead). Returns true if
+    /// the window turned out to have a larger minimum size than we knew.
+    private func place(_ window: Window, in rect: CGRect) -> Bool {
+        let bounds = screenBounds().insetBy(dx: gap, dy: gap)
+        var frame = rect
+        frame.size.width = min(max(frame.width, window.minSize.width), bounds.width)
+        frame.size.height = min(max(frame.height, window.minSize.height), bounds.height)
+        frame.origin.x = max(bounds.minX, min(frame.minX, bounds.maxX - frame.width))
+        frame.origin.y = max(bounds.minY, min(frame.minY, bounds.maxY - frame.height))
+        window.setFrame(frame)
+
+        guard let actual = window.element.frame else { return false }
+        log("place \(window.label) \(frame) → \(actual)")
+        var minimum = window.minSize
+        if actual.width > frame.width + 1 { minimum.width = actual.width }
+        if actual.height > frame.height + 1 { minimum.height = actual.height }
+        guard minimum != window.minSize else { return false }
+        window.minSize = minimum
+        log("\(window.label) minimum size \(minimum)")
+        return true
     }
 
     func focusSelected() {
@@ -366,7 +446,8 @@ final class WM {
             border.hide()
             return
         }
-        border.show(around: flipped(rect), empty: pane.current == nil)
+        let frame = pane.current.flatMap { windows[$0]?.expected } ?? rect
+        border.show(around: flipped(frame), empty: pane.current == nil)
     }
 
     /// Tree, pane histories and focus; printed on SIGUSR1.
@@ -463,6 +544,7 @@ final class WM {
         tabs.insert(Tab(), at: tabIndex + 1)
         tabIndex += 1
         layout()
+        announceTab()
     }
 
     func closeTab() {
@@ -470,17 +552,24 @@ final class WM {
         tabs.remove(at: tabIndex)
         tabIndex = min(tabIndex, tabs.count - 1)
         layout()
+        announceTab()
     }
 
     func switchTab(_ dir: Int) {
         guard tabs.count > 1 else { return Hud.shared.flash("Only one tab") }
         tabIndex = (tabIndex + dir + tabs.count) % tabs.count
         layout()
+        announceTab()
+    }
+
+    private func announceTab() {
+        Hud.shared.flash("Tab \(tabIndex + 1) of \(tabs.count)")
     }
 
     func selectTab(_ index: Int) {
         guard tabs.indices.contains(index) else { return }
         tabIndex = index
         layout()
+        announceTab()
     }
 }

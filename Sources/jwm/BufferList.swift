@@ -32,7 +32,9 @@ final class BufferList: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
         let column = NSTableColumn(identifier: .init("buffer"))
         table.addTableColumn(column)
         table.headerView = nil
-        table.rowHeight = 26
+        table.rowHeight = 32
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        column.resizingMask = .autoresizingMask
         table.style = .plain
         table.dataSource = self
         table.delegate = self
@@ -75,7 +77,7 @@ final class BufferList: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
     private func filter() {
         let terms = field.stringValue.lowercased().split(separator: " ")
         shown = all.filter { window, _ in
-            let label = window.label.lowercased()
+            let label = "\(window.appName) \(window.title)".lowercased()
             return terms.allSatisfy { label.contains($0) }
         }
         table.reloadData()
@@ -126,9 +128,24 @@ final class BufferList: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let (window, visible) = shown[row]
-        let label = NSTextField(labelWithString: (visible ? "● " : "   ") + window.label)
-        label.font = .systemFont(ofSize: 14)
-        label.lineBreakMode = .byTruncatingTail
-        return label
+        let icon = NSImageView(image: window.icon ?? NSImage())
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([icon.widthAnchor.constraint(equalToConstant: 20),
+                                     icon.heightAnchor.constraint(equalToConstant: 20)])
+        let title = NSTextField(labelWithString: window.shortTitle)
+        title.font = .systemFont(ofSize: 14)
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let detail = NSTextField(labelWithString: window.appName + (visible ? " · on screen" : ""))
+        detail.font = .systemFont(ofSize: 12)
+        detail.textColor = .secondaryLabelColor
+        detail.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let rowView = NSStackView(views: [icon, title, spacer, detail])
+        rowView.spacing = 10
+        rowView.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 10)
+        if visible { rowView.alphaValue = 0.6 }
+        return rowView
     }
 }
