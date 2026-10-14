@@ -1,5 +1,10 @@
 import AppKit
 
+func log(_ message: String) {
+    guard ProcessInfo.processInfo.environment["JWM_DEBUG"] != nil else { return }
+    FileHandle.standardError.write(Data("jwm: \(message)\n".utf8))
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
@@ -26,6 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func begin() {
+        let usr1 = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+        signal(SIGUSR1, SIG_IGN)
+        usr1.setEventHandler { print(WM.shared.dump()); fflush(stdout) }
+        usr1.resume()
+        signalSources.append(usr1)
+
         guard Hotkeys.shared.start() else {
             print("jwm: couldn't create the keyboard event tap")
             exit(1)

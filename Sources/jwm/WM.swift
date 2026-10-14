@@ -167,6 +167,13 @@ final class WM {
     private func userFocused(_ element: AXUIElement) {
         guard started, Date() > ignoreFocusUntil, let id = element.windowID else { return }
         guard windows[id] != nil else { scheduleRefresh(); return }
+        // The selected pane's window just closed and the app is focusing another of its windows:
+        // stay in this pane and let refresh() fall back through its history, like Emacs kill-buffer.
+        if let current = tab.focused.current, current != id,
+           windows[current]?.element.string(kAXRoleAttribute) == nil {
+            scheduleRefresh()
+            return
+        }
         touch(id)
         if let pane = tab.visiblePanes.first(where: { $0.current == id }) {
             if pane !== tab.focused {
@@ -183,7 +190,8 @@ final class WM {
     // MARK: External moves and resizes
 
     private func frameChanged(_ element: AXUIElement) {
-        guard started, let id = element.windowID, let window = windows[id] else { return }
+        guard started, let id = element.windowID, let window = windows[id],
+              Date() > window.ownChangeUntil else { return }
         if NSEvent.pressedMouseButtons & 1 != 0 { window.draggedByMouse = true }
         movedWindows.insert(id)
         scheduleFrameCheck()
@@ -313,6 +321,7 @@ final class WM {
         for window in windows.values {
             if let frame = frames[window.id] {
                 window.setFrame(frame)
+                log("place \(window.label) \(frame) → \(window.element.frame.map { "\($0)" } ?? "?")")
             } else if !window.parked {
                 window.park(in: screen)
             }
@@ -343,9 +352,26 @@ final class WM {
         border.show(around: flipped(rect), empty: pane.current == nil)
     }
 
+    /// Tree, pane histories and focus; printed on SIGUSR1.
+    func dump() -> String {
+        func name(_ id: CGWindowID?) -> String { id.flatMap { windows[$0]?.label } ?? "∅" }
+        func describe(_ node: Node, _ depth: Int) -> String {
+            let pad = String(repeating: "  ", count: depth)
+            if let pane = node as? Pane {
+                let history = pane.history.map { $0 == pane.current ? "[\(name($0))]" : name($0) }
+                return pad + (pane === tab.focused ? "* " : "- ") + history.joined(separator: " ⇄ ") + "\n"
+            }
+            let split = node as! Split
+            return pad + (split.vertical ? "| " : "— ") + String(format: "%.2f", split.ratio) + "\n"
+                + describe(split.a, depth + 1) + describe(split.b, depth + 1)
+        }
+        return "tab \(tabIndex + 1)/\(tabs.count)\(tab.zoomed != nil ? " (zoomed)" : "")\n" + describe(tab.root, 0)
+    }
+
     // MARK: Commands
 
     func command(_ key: Int, shift: Bool) {
+        log("command key=\(key)")
         switch key {
         case kVK_ANSI_2: split(vertical: false)
         case kVK_ANSI_3: split(vertical: true)
