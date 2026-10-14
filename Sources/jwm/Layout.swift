@@ -142,7 +142,7 @@ final class Tab {
         return out
     }
 
-    /// The user dragged edges of `pane`'s window from `expected` to `actual`: move the split boundaries
+    /// Something dragged edges of `pane`'s window from `expected` to `actual`: move the split boundaries
     /// to follow. `bounds` is what `rects(in:)` was given, `inset` how far windows sit inside their pane.
     func adjust(_ pane: Pane, from expected: CGRect, to actual: CGRect, bounds: CGRect, inset: CGFloat) -> Bool {
         guard zoomed == nil else { return false }
@@ -150,27 +150,37 @@ final class Tab {
         walk(in: bounds) { node, r in
             if node is Split { splitRects[ObjectIdentifier(node)] = r }
         }
-        var changed = false
-        // Nearest ancestor split along that axis with the pane on the given side.
-        func move(vertical: Bool, paneInA: Bool, to boundary: CGFloat) {
+        // Nearest ancestor split along that axis with the pane on the given side, and its new ratio.
+        func boundary(vertical: Bool, paneInA: Bool, at position: CGFloat) -> (Split, CGFloat)? {
             var child: Node = pane
             while let parent = child.parent {
                 if parent.vertical == vertical, (parent.a === child) == paneInA,
                    let r = splitRects[ObjectIdentifier(parent)] {
-                    let ratio = vertical ? (boundary - r.minX) / r.width : (boundary - r.minY) / r.height
-                    parent.ratio = min(0.9, max(0.1, ratio))
-                    changed = true
-                    return
+                    let ratio = vertical ? (position - r.minX) / r.width : (position - r.minY) / r.height
+                    return (parent, min(0.9, max(0.1, ratio)))
                 }
                 child = parent
             }
+            return nil
         }
-        let tolerance: CGFloat = 2
-        if abs(actual.maxX - expected.maxX) > tolerance { move(vertical: true, paneInA: true, to: actual.maxX + inset) }
-        if abs(actual.minX - expected.minX) > tolerance { move(vertical: true, paneInA: false, to: actual.minX - inset) }
-        if abs(actual.maxY - expected.maxY) > tolerance { move(vertical: false, paneInA: true, to: actual.maxY + inset) }
-        if abs(actual.minY - expected.minY) > tolerance { move(vertical: false, paneInA: false, to: actual.minY - inset) }
-        return changed
+        // Edges within a gap's width of where they were count as unchanged, so tools that ignore our
+        // gaps (Raycast) still read as a one-edge resize. If both edges on an axis moved, the window was
+        // moved rather than resized along that axis, which the tree can't express.
+        let tolerance: CGFloat = 12
+        let left = abs(actual.minX - expected.minX) > tolerance, right = abs(actual.maxX - expected.maxX) > tolerance
+        let top = abs(actual.minY - expected.minY) > tolerance, bottom = abs(actual.maxY - expected.maxY) > tolerance
+        if left && right || top && bottom { return false }
+        let wanted = [
+            right ? (true, true, actual.maxX + inset) : nil,
+            left ? (true, false, actual.minX - inset) : nil,
+            bottom ? (false, true, actual.maxY + inset) : nil,
+            top ? (false, false, actual.minY - inset) : nil,
+        ].compactMap { $0 }
+        // All or nothing: half-applying e.g. Raycast "top half" on a full-height pane would be surprising.
+        let moves = wanted.compactMap { boundary(vertical: $0.0, paneInA: $0.1, at: $0.2) }
+        guard !moves.isEmpty, moves.count == wanted.count else { return false }
+        for (split, ratio) in moves { split.ratio = ratio }
+        return true
     }
 
     /// Grows (positive) or shrinks the focused pane within its parent split.

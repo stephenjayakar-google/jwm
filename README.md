@@ -7,7 +7,9 @@ An Emacs-style tiling window manager for macOS.
 - **Tabs** are separate window configurations (split trees). The same buffer can appear in several tabs.
 - New windows open in the selected pane, replacing what was there (it stays in that pane's history).
 - Focusing a window that isn't displayed (Cmd-Tab, Dock click) shows it in the selected pane.
-- Dragging a tiled window's edge resizes its pane. Moving a tiled window, or an app resizing itself, snaps it back.
+- If something else changes a tiled window's frame (mouse drag, Raycast/Rectangle, the app itself):
+  - one edge moved per axis, and the split tree can express it → the split follows, and so do the other panes;
+  - anything else (moved, or e.g. "top half" with no top/bottom split) → the window snaps back.
 
 ## Keys
 
@@ -30,6 +32,7 @@ An Emacs-style tiling window manager for macOS.
 | `⌘D .` / `⌘D ,` | grow / shrink selected pane |
 | `⌘D =` | balance panes |
 | `⌘D r` | re-scan windows and re-apply layout |
+| `⌘D ?` | show all commands |
 | `⌘D ⌘D` | send a real ⌘D to the app |
 | `⌘D Esc` / `⌘D g` | cancel |
 

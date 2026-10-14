@@ -11,10 +11,10 @@ final class Window {
     var parked = false
     /// Where the current layout puts this window; nil while parked.
     var expected: CGRect?
-    /// Set when a move/resize happened with the mouse button down, i.e. the user dragged it.
-    var draggedByMouse = false
-    /// Last time we pushed the window back; used to stop fighting apps that insist on their own frame.
+    /// Last time we pushed the window back, and how many times in a row; used to stop fighting
+    /// apps that insist on their own frame.
     var lastCorrection = Date.distantPast
+    var corrections = 0
     /// Move/resize events before this time are echoes of our own setFrame/park.
     var ownChangeUntil = Date.distantPast
     /// Frame before jwm touched it, restored on quit.
@@ -49,7 +49,7 @@ final class Window {
         if enhanced { app.set("AXEnhancedUserInterface", kCFBooleanTrue) }
         expected = rect
         parked = false
-        ownChangeUntil = Date().addingTimeInterval(0.25)
+        ownChangeUntil = Date().addingTimeInterval(0.4)
     }
 
     /// Moves the window so only its top-left pixel sits in the bottom-right corner of `screen`.
@@ -57,7 +57,7 @@ final class Window {
         element.setPosition(CGPoint(x: screen.maxX - 1, y: screen.maxY - 1))
         parked = true
         expected = nil
-        ownChangeUntil = Date().addingTimeInterval(0.25)
+        ownChangeUntil = Date().addingTimeInterval(0.4)
     }
 
     func focus() {

@@ -23,6 +23,7 @@ final class WM {
 
     lazy var border = Border()
     lazy var bufferList = BufferList()
+    lazy var help = Help()
 
     // MARK: Lifecycle
 
@@ -45,10 +46,14 @@ final class WM {
         ) { _ in self.layout() }
 
         refresh()
+        // Seed recency from the on-screen stacking order (front to back).
+        let stack = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        mru = stack.compactMap { $0[kCGWindowNumber as String] as? CGWindowID }.filter { windows[$0] != nil }
         let first = Tab()
-        if let window = frontmostWindow() {
-            first.focused.show(window.id)
-            touch(window.id)
+        if let id = frontmostWindow()?.id ?? mru.first {
+            first.focused.show(id)
+            touch(id)
         }
         tabs = [first]
         started = true
@@ -192,7 +197,6 @@ final class WM {
     private func frameChanged(_ element: AXUIElement) {
         guard started, let id = element.windowID, let window = windows[id],
               Date() > window.ownChangeUntil else { return }
-        if NSEvent.pressedMouseButtons & 1 != 0 { window.draggedByMouse = true }
         movedWindows.insert(id)
         scheduleFrameCheck()
     }
@@ -217,8 +221,6 @@ final class WM {
     /// Reacts to a window ending up somewhere other than where we put it. Returns true if the
     /// layout itself changed and needs reapplying.
     private func checkFrame(_ window: Window) -> Bool {
-        let dragged = window.draggedByMouse
-        window.draggedByMouse = false
         guard let actual = window.element.frame else { return false }
         let close = { (a: CGRect, b: CGRect) in
             abs(a.minX - b.minX) <= 2 && abs(a.minY - b.minY) <= 2
@@ -227,28 +229,43 @@ final class WM {
 
         if let expected = window.expected {
             if close(actual, expected) { return false }
-            // Dragging a tiled window's edge resizes its pane.
-            let resized = abs(actual.width - expected.width) > 2 || abs(actual.height - expected.height) > 2
-            if dragged, resized, let pane = tab.visiblePanes.first(where: { $0.current == window.id }) {
+            // A changed edge (mouse drag, Raycast "left 2/3", …) resizes the pane.
+            if let pane = tab.visiblePanes.first(where: { $0.current == window.id }) {
                 let half = gap / 2
                 if tab.adjust(pane, from: expected, to: actual,
                               bounds: screenBounds().insetBy(dx: half, dy: half), inset: half) {
+                    log("\(window.label) resized externally → adjusted splits")
                     return true
                 }
             }
-            // Anything else (title bar drag, app resizing itself): snap back, unless the app keeps fighting.
-            guard Date().timeIntervalSince(window.lastCorrection) > 1 else { return false }
-            window.lastCorrection = Date()
-            window.setFrame(expected)
+            // Moved, or a shape the split tree can't express: put it back.
+            correct(window) { $0.setFrame(expected) }
         } else if window.parked {
             // Something pulled a parked buffer back on screen.
             let visible = actual.intersection(screenBounds())
-            guard visible.width > 20, visible.height > 20,
-                  Date().timeIntervalSince(window.lastCorrection) > 1 else { return false }
-            window.lastCorrection = Date()
-            window.park(in: flipped(NSScreen.screens.first?.frame ?? .zero))
+            guard visible.width > 20, visible.height > 20 else { return false }
+            correct(window) { $0.park(in: flipped(NSScreen.screens.first?.frame ?? .zero)) }
         }
         return false
+    }
+
+    /// Applies a correction at most once a second per window, rechecking later instead of dropping
+    /// it, and gives up after a few back-to-back attempts so we don't fight an app forever.
+    private func correct(_ window: Window, _ fix: (Window) -> Void) {
+        let since = Date().timeIntervalSince(window.lastCorrection)
+        if since > 5 { window.corrections = 0 }
+        guard window.corrections < 3 else { return log("giving up on \(window.label)") }
+        guard since >= 1 else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1 - since) {
+                self.movedWindows.insert(window.id)
+                self.scheduleFrameCheck()
+            }
+            return
+        }
+        window.corrections += 1
+        window.lastCorrection = Date()
+        log("correcting \(window.label)")
+        fix(window)
     }
 
     private func touch(_ id: CGWindowID) {
@@ -329,7 +346,7 @@ final class WM {
         focusSelected()
     }
 
-    private func focusSelected() {
+    func focusSelected() {
         ignoreFocusUntil = Date().addingTimeInterval(0.3)
         if let id = tab.focused.current, let window = windows[id] {
             window.focus()
@@ -372,29 +389,14 @@ final class WM {
 
     func command(_ key: Int, shift: Bool) {
         log("command key=\(key)")
-        switch key {
-        case kVK_ANSI_2: split(vertical: false)
-        case kVK_ANSI_3: split(vertical: true)
-        case kVK_ANSI_0: deletePane()
-        case kVK_ANSI_1: deleteOtherPanes()
-        case kVK_ANSI_O: focusPane(1)
-        case kVK_ANSI_J: walkHistory(-1)
-        case kVK_ANSI_L: walkHistory(1)
-        case kVK_ANSI_B: showBufferList()
-        case kVK_ANSI_F: toggleZoom()
-        case kVK_ANSI_K: killBuffer()
-        case kVK_ANSI_T: newTab()
-        case kVK_ANSI_W: closeTab()
-        case kVK_ANSI_RightBracket: switchTab(1)
-        case kVK_ANSI_LeftBracket: switchTab(-1)
-        case kVK_ANSI_Equal: tab.balance(); layout()
-        case kVK_ANSI_Period: tab.resizeFocused(by: 0.05); layout()
-        case kVK_ANSI_Comma: tab.resizeFocused(by: -0.05); layout()
-        case kVK_ANSI_D: Hotkeys.shared.sendLiteralPrefix()
-        case kVK_ANSI_R: refresh(); layout()
-        case kVK_Escape, kVK_ANSI_G: break
-        default: Hud.shared.flash("⌘D … is undefined")
+        guard let command = WM.commands.first(where: { $0.keys.contains(key) }) else {
+            return Hud.shared.flash("⌘D … is undefined · ⌘D ? for help")
         }
+        command.run(self)
+    }
+
+    func showHelp() {
+        help.show { self.focusSelected() }
     }
 
     func split(vertical: Bool) {
