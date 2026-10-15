@@ -48,7 +48,7 @@ private final class BorderView: NSView {
         let title = NSAttributedString(string: "Empty pane", attributes: [
             .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.white,
         ])
-        let hint = NSAttributedString(string: "⌘D b  buffers     ⌘D ?  help", attributes: [
+        let hint = NSAttributedString(string: "⌘D b  buffers     ⌘D x  commands", attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
             .foregroundColor: NSColor.white.withAlphaComponent(0.75),
         ])
@@ -141,7 +141,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
             item.state = i == wm.tabIndex ? .on : .off
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Commands…  (⌘D ?)", action: #selector(help), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Commands…  (⌘D x)", action: #selector(help), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Re-layout  (⌘D r)", action: #selector(relayout), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Reset Layout", action: #selector(reset), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -149,7 +149,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
     }
 
     @objc private func selectTab(_ sender: NSMenuItem) { WM.shared.selectTab(sender.tag) }
-    @objc private func help() { WM.shared.showHelp() }
+    @objc private func help() { WM.shared.showPalette() }
     @objc private func reset() { WM.shared.resetLayout() }
 
     @objc private func relayout() {

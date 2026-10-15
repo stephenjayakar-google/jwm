@@ -35,7 +35,7 @@ final class WM {
 
     lazy var border = Border()
     lazy var bufferList = BufferList()
-    lazy var help = Help()
+    lazy var palette = CommandPalette()
 
     // MARK: Lifecycle
 
@@ -517,13 +517,19 @@ final class WM {
         log("command key=\(key)")
         guard onHomeSpace || key == kVK_ANSI_D else { return Hud.shared.flash("jwm is paused on this desktop") }
         guard let command = WM.commands.first(where: { $0.keys.contains(key) }) else {
-            return Hud.shared.flash("⌘D … is undefined · ⌘D ? for help")
+            return Hud.shared.flash("⌘D … is undefined · ⌘D x for commands")
         }
         command.run(self)
     }
 
-    func showHelp() {
-        help.show { self.focusSelected() }
+    func showPalette() {
+        palette.show { command in
+            command?.run(self)
+            // Hand focus back to the selected pane unless the command did, or opened another picker.
+            DispatchQueue.main.async {
+                if NSApp.isActive, !NSApp.windows.contains(where: \.isKeyWindow) { self.focusSelected() }
+            }
+        }
     }
 
     func split(vertical: Bool) {

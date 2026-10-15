@@ -38,7 +38,8 @@ An Emacs-style tiling window manager for macOS.
 | `⌘D .` / `⌘D ,` | grow / shrink selected pane |
 | `⌘D =` | balance panes |
 | `⌘D r` | re-scan windows and re-apply layout |
-| `⌘D ?` | show all commands |
+| *(M-x only)* | `reset-layout`, `quit-jwm` |
+| `⌘D x` / `⌘D ?` | M-x: run any command by name (prefix search, Tab completes, `s-w-r` style partial completion) |
 | `⌘D ⌘D` | send a real ⌘D to the app |
 | `⌘D Esc` / `⌘D g` | cancel |
 
