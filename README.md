@@ -43,7 +43,20 @@ An Emacs-style tiling window manager for macOS.
 | `⌘D ⌘D` | send a real ⌘D to the app |
 | `⌘D Esc` / `⌘D g` | cancel |
 
-## Running
+## Install (Apple Silicon)
+
+Download `jwm-<version>-arm64.app.zip` from [Releases](../../releases), unzip, move `jwm.app` to
+`/Applications`, then:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/jwm.app   # it's ad-hoc signed, not notarized
+open /Applications/jwm.app
+```
+
+Grant Accessibility when prompted (System Settings → Privacy & Security → Accessibility), then open it
+again. `jwm-<version>-arm64.tar.gz` is the bare binary, if you'd rather run it from a terminal.
+
+## Running from source
 
 ```sh
 make run       # build and run in the foreground; Ctrl-C quits and restores windows
