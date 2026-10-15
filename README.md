@@ -27,7 +27,7 @@ An Emacs-style tiling window manager for macOS.
 | `⌘D 2` | split selected pane top/bottom |
 | `⌘D 0` | delete selected pane |
 | `⌘D 1` | delete all other panes |
-| `Ctrl-Tab` / `Ctrl-Shift-Tab`, `⌘D o` | select next / previous pane |
+| `⌥Tab` / `⌥⇧Tab`, `⌘D o` | select next / previous pane (⌃Tab is left to browsers/editors) |
 | `⌘D j` / `⌘D l` | back / forward in the pane's buffer history |
 | `⌘D b` | buffer list (type to filter, ↑↓, Enter, Esc) |
 | `⌘D f` | toggle full screen for the selected pane |

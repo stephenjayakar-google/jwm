@@ -1,7 +1,8 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Global key handling via a session event tap: ⌘D starts a prefix sequence, Ctrl-(Shift-)Tab cycles panes.
+/// Global key handling via a session event tap: ⌘D starts a prefix sequence, ⌥(⇧)Tab cycles panes.
+/// (⌥Tab rather than ⌃Tab, which browsers and editors use to switch their own tabs.)
 final class Hotkeys {
     static let shared = Hotkeys()
 
@@ -73,7 +74,7 @@ final class Hotkeys {
             DispatchQueue.main.async { Hud.shared.show("⌘D –") }
             return nil
         }
-        if key == kVK_Tab && ctrl && !cmd && !opt {
+        if key == kVK_Tab && opt && !cmd && !ctrl {
             swallowedUps.insert(key)
             DispatchQueue.main.async { WM.shared.focusPane(shift ? -1 : 1) }
             return nil
